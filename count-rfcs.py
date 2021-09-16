@@ -1,16 +1,18 @@
-import urllib.request
+import http.client
 import re
+import json
 import sys
+import pprint
 from bs4 import BeautifulSoup
 
 # Here are the parameters to set. See the README for more information
-name = 'M. Duke'
-full_name = 'Martin Duke'
+name = 'Martin Duke'
 include_informational = False
-include_experimental = False
+include_experimental = True
 include_acknowledgments = True
 first_year = 2013
 first_rfc = 4614
+last_rfc = 20000
 first_ad_year = 2020
 # The filters below only apply to RFCs published before 'first_ad_year'
 # Matching any of these is sufficient
@@ -18,7 +20,8 @@ first_ad_year = 2020
 streams = [ ]
 #all values: areas = [ 'art', 'gen', 'int', 'ops', 'rtg', 'sec', 'tsv' ]
 areas = [ 'tsv' ]
-#all values: too many to list here; include 'NON' for non-WG
+#all values: too many to list here; include 'NON' for non-WG; 'IESG' is also
+# accepted
 wgs = [ ]
 
 # Result maps
@@ -27,17 +30,23 @@ responsible_ad = {}
 shepherd = {}
 contributor = {}
 balloted = {}
+retrieve_error = {}
 # not yet supported
 art_reviewer = {}
 
-rfced_url = 'https://www.rfc-editor.org/rfc-index2.html'
-rfced_req = urllib.request.Request(rfced_url)
-try: rfced_resp = urllib.request.urlopen(rfced_req)
-except urllib.error.HTTPError as e:
-    print(e.reason)
+rfced = http.client.HTTPSConnection('www.rfc-editor.org')
+rfced.request('GET', '/rfc-index2.html')
+try: rfced_resp = rfced.getresponse()
+except ConnectionError as e:
+    print(type(e).__qualname__)
     sys.exit()
 else:
     rfc_list = rfced_resp.read()
+if rfced_resp.closed:
+    rfced = http.client.HTTPSConnection('www.rfc-editor.org')
+
+# Set up datatracker connection
+dt = http.client.HTTPSConnection('datatracker.ietf.org')
 
 rfc_soup = BeautifulSoup(rfc_list, 'html.parser')
 # Find third table in document
@@ -55,6 +64,8 @@ for row in table.contents:
     if int(rfcnum) < first_rfc:
         print("RFC number too early")
         break
+    if int(rfcnum) > last_rfc:
+        continue
     # Check other metadata before querying datatracker
     longline = row.td.find_next_sibling("td").get_text()
     if longline.find('Not Issued') >= 0:
@@ -83,7 +94,10 @@ for row in table.contents:
             print(doc["Stream"] + " stream not tracked")
             continue
         if (doc["WG"] == 'NON') and not ('NON' in wgs):
-            print("No working group")
+            print("Discarding No working group")
+            continue
+        if (doc["WG"] == 'IESG') and not ('IESG' in wgs):
+            print("Discarding IESG working group")
             continue
         if not ((doc["Area"] in areas) or (doc["WG"] in wgs)):
             print(doc["Area"] + " and " + doc["WG"] + " don't match")
@@ -95,103 +109,99 @@ for row in table.contents:
         print("Discarding EXPERIMENTAL")
         continue
 
-    if longline.find(name) >= 0:
-        print("Authored")
-        author[rfcnum] = title
+    # Get the datatracker metadata
+    retry = True
+    while retry:
+        dt.request('GET', '/doc/rfc'+rfcnum+'/doc.json')
+        try: dt_resp = dt.getresponse()
+        except ConnectionError as e:
+             continue
+#            retrieve_error[rfcnum] = title
+#            print("Could not retrieve .json: " + type(e).__qualname__)
+        else:
+            retry = False
+            dt_json = dt_resp.read()
+    # Check for author, shepherd, AD
+    found = False
+    dt_data = json.loads(dt_json)
+    for auth_entry in dt_data['authors']:
+        if auth_entry['name'] == name:
+            author[rfcnum]= title
+            found = True
+            break
+    if found:
+        continue
+    if dt_data['shepherd'] != None:
+        shep = dt_data['shepherd'].split(" <")[0]
+        if (shep == name):
+            print("Shepherd")
+            shepherd[rfcnum] = title
+            continue
+    if dt_data['ad'] != None:
+        ad = dt_data['ad'].split(" <")[0]
+        if (ad == name):
+            print("Responsible AD")
+            responsible_ad[rfcnum] = title
+            continue
+
+    # Check the text of the RFC for acknowledgments
+    if include_acknowledgments:
+        retry = True
+        while retry:
+            rfced.request('GET', '/rfc/rfc'+rfcnum+'.txt')
+            try: rfced_resp = rfced.getresponse()
+            except ConnectionError as e:
+                continue
+#                retrieve_error[rfcnum] = title
+#                print("Could not retrieve .txt: " + type(e).__qualname__)
+            else:
+                retry = False
+                rfc_txt = rfced_resp.read().decode('utf-8')
+        if rfced_resp.closed:
+            rfced = http.client.HTTPSConnection('www.rfc-editor.org')
+        if rfc_txt.find(name) >= 0:
+            print("Contributor")
+            contributor[rfcnum] = title
+            continue
+
+    if (year < first_ad_year):
+        print("Name did not appear")
         continue
 
-    if (year > first_ad_year):
-        # Extract the ballot
-        ballot_review = False
-        ballot_url='https://datatracker.ietf.org/doc/rfc'+rfcnum+'/ballot/'
-        ballot_req = urllib.request.Request(ballot_url)
-        try: ballot_resp = urllib.request.urlopen(ballot_req)
-        except urllib.error.HTTPError as e:
-            continue
-        else:
-            ballot_html = ballot_resp.read()
-        ballot_soup = BeautifulSoup(ballot_html, 'html.parser')
-        for ad in ballot_soup.select('div[class="balloter-name"]'):
-            if ad.a == None: # did not review
-                continue
-            ad_name = ad.get_text().strip()
-            if (ad_name == full_name) or (ad_name == '(' + full_name + ')'):
-                ballot_review = True
-
-    # Get the datatracker page
-    dt_url='https://datatracker.ietf.org/doc/rfc'+rfcnum+'/'
-    dt_req = urllib.request.Request(dt_url)
-    try: dt_resp = urllib.request.urlopen(dt_req)
-    except urllib.error.HTTPError as e:
+    # Check if balloted
+    dt.request('GET', '/doc/rfc'+rfcnum+'/ballot/')
+    try: dt_resp = dt.getresponse()
+    except ConnectionError as e:
+        retrieve_error[rfcnum] = title
+        print("Could not retrieve ballot: " + type(e).__qualname__)
         continue
     else:
-        dt_html = dt_resp.read()
-    uc_name = full_name.encode('utf-8')
-    if (dt_html.find(uc_name) < 0):
-        if ballot_review:
+        ballot_html = dt_resp.read()
+    ballot_soup = BeautifulSoup(ballot_html, 'html.parser')
+    for ad in ballot_soup.select('div[class="balloter-name"]'):
+        if ad.a == None: # did not review
+            continue
+        ad_name = ad.get_text().strip()
+        if (ad_name == name) or (ad_name == '(' + name + ')'):
             print("Balloted")
+            found = True
             balloted[rfcnum] = title
-        else:
-            print("Name did not appear")
-        continue
-    found = False
-    dtsoup = BeautifulSoup(dt_html, 'html.parser')
-    dtsoup_tables = dtsoup.findChildren('table')
-    dtsoup_body = dtsoup_tables[0].findChildren('tbody')
-    # Extract Shepherd
-    dttable = dtsoup_body[2]
-    entries = dttable.findChildren('tr')
-    for entry in entries:
-        cols = entry.findChildren('th')
-        if len(cols) < 2:
-            continue
-        key = cols[1].text.strip()
-        if (key == "Document shepherd"):
-            values = entry.findChildren('td')
-            value = values[1].text.strip()
-            #print("shepherd: " + value)
-            if (value == full_name):
-                print("Shepherd",end="")
-                shepherd.append(rfcnum.encode('ascii'))
-                found = true
-                break
-    if found:
-        continue
+            break
 
-    # Extract Responsible AD
-    dttable = dtsoup_body[3]
-    entries = dttable.findChildren('tr')
-    for entry in entries:
-        cols = entry.findChildren('th')
-        if len(cols) < 2:
-            continue
-        key = cols[1].text.strip()
-        values = entry.findChildren('td')
-        value = values[1].text.strip()
-        if (key == "Responsible AD"):
-            values = entry.findChildren('td')
-            value = values[1].text.strip()
-            #print("AD: " + value)
-            if value == full_name:
-                print("Responsible AD")
-                responsible_ad[rfc_num] = title
-                found = true
-                break
-    if found:
-        continue
+    if not found:
+        print("Name did not appear")
 
-    print("Acknowledged")
-    contributor[rfcnum] = title
-
-
-
+rfced.close()
+dt.close()
 print("Authored: " + str(len(author)))
-print(author)
+pprint.pprint(author)
 print("Shepherded:" + str(len(shepherd)))
-print(shepherd)
+pprint.pprint(shepherd)
 print("Responsible AD: " + str(len(responsible_ad)))
-print(responsible_ad)
+pprint.pprint(responsible_ad)
 print("Balloted: " + str(len(balloted)))
-print(balloted)
+pprint.pprint(balloted)
 print("Acknowledged: " + str(len(contributor)))
-print(contributor)
+pprint.pprint(contributor)
+print("Document retrieval errors: " + str(len(retrieve_error)))
+pprint.pprint(retrieve_error)
