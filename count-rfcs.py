@@ -18,7 +18,8 @@ first_ad_year = 2020
 streams = [ ]
 #all values: areas = [ 'art', 'gen', 'int', 'ops', 'rtg', 'sec', 'tsv' ]
 areas = [ 'tsv' ]
-#all values: too many to list here; include 'NON' for non-WG
+#all values: too many to list here; include 'NON' for non-WG; 'IESG' is also
+# accepted
 wgs = [ ]
 
 # Result maps
@@ -85,7 +86,10 @@ for row in table.contents:
             print(doc["Stream"] + " stream not tracked")
             continue
         if (doc["WG"] == 'NON') and not ('NON' in wgs):
-            print("No working group")
+            print("Discarding No working group")
+            continue
+        if (doc["WG"= == 'IESG') and not ('IESG' in wgs):
+            print("Discarding IESG working group")
             continue
         if not ((doc["Area"] in areas) or (doc["WG"] in wgs)):
             print(doc["Area"] + " and " + doc["WG"] + " don't match")
