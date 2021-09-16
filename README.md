@@ -13,7 +13,7 @@ A simple python tool to identify the contributions to RFCs for any IETF particip
 
 Just type
 '''
-python3 rfcs.py
+python3 count-rfcs.py
 '''
 
 To run it.
