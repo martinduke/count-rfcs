@@ -10,7 +10,7 @@ include_informational = False
 include_experimental = False
 include_acknowledgments = True
 first_year = 2013
-first_rfc = 9130
+first_rfc = 4614
 first_ad_year = 2020
 # The filters below only apply to RFCs published before 'first_ad_year'
 # Matching any of these is sufficient
@@ -100,22 +100,23 @@ for row in table.contents:
         author[rfcnum] = title
         continue
 
-    # Extract the ballot
-    ballot_review = False
-    ballot_url='https://datatracker.ietf.org/doc/rfc'+rfcnum+'/ballot/'
-    ballot_req = urllib.request.Request(ballot_url)
-    try: ballot_resp = urllib.request.urlopen(ballot_req)
-    except urllib.error.HTTPError as e:
-        continue
-    else:
-        ballot_html = ballot_resp.read()
-    ballot_soup = BeautifulSoup(ballot_html, 'html.parser')
-    for ad in ballot_soup.select('div[class="balloter-name"]'):
-        if ad.a == None: # did not review
+    if (year > first_ad_year):
+        # Extract the ballot
+        ballot_review = False
+        ballot_url='https://datatracker.ietf.org/doc/rfc'+rfcnum+'/ballot/'
+        ballot_req = urllib.request.Request(ballot_url)
+        try: ballot_resp = urllib.request.urlopen(ballot_req)
+        except urllib.error.HTTPError as e:
             continue
-        ad_name = ad.get_text().strip()
-        if (ad_name == full_name) or (ad_name == '(' + full_name + ')'):
-            ballot_review = True
+        else:
+            ballot_html = ballot_resp.read()
+        ballot_soup = BeautifulSoup(ballot_html, 'html.parser')
+        for ad in ballot_soup.select('div[class="balloter-name"]'):
+            if ad.a == None: # did not review
+                continue
+            ad_name = ad.get_text().strip()
+            if (ad_name == full_name) or (ad_name == '(' + full_name + ')'):
+                ballot_review = True
 
     # Get the datatracker page
     dt_url='https://datatracker.ietf.org/doc/rfc'+rfcnum+'/'
