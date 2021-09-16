@@ -3,11 +3,23 @@ import re
 import sys
 from bs4 import BeautifulSoup
 
-first_rfc = 4614
-include_informational = True
-include_experimental = True
+# Here are the parameters to set. See the README for more information
 name = 'M. Duke'
 full_name = 'Martin Duke'
+include_informational = False
+include_experimental = False
+include_acknowledgments = True
+first_year = 2013
+first_rfc = 4614
+first_ad_year = 2020
+# The filters below only apply to RFCs published before 'first_ad_year'
+# Matching any of these is sufficient
+#all values: streams = [ 'IAB', 'IETF', 'INDEPENDENT', 'IRTF' ]
+streams = [ ]
+#all values: areas = [ 'art', 'gen', 'int', 'ops', 'rtg', 'sec', 'tsv' ]
+areas = [ 'tsv' ]
+#all values: too many to list here; include 'NON' for non-WG
+wgs = [ ]
 
 # Result lists
 author = []
@@ -38,22 +50,53 @@ for row in table.contents:
     if (row.td.noscript == None):
         continue
     rfcnum = row.td.noscript.get_text()
+    print(rfcnum, end=" ")
     # Break after documents I couldn't possibly have affected
     if int(rfcnum) < first_rfc:
+        print("RFC number too early")
         break
+    # Check other metadata before querying datatracker
     longline = row.td.find_next_sibling("td").get_text()
     if longline.find('Not Issued') >= 0:
+        print ("Not issued")
         continue
-    if (not include_informational) or (not include_experimental):
-        status_block = re.findall(r'\(Status: .*?\)', longline)
-        status = status_block[0][9:(len(status_block[0])-1)]
-        if (not include_informational) and (status == 'INFORMATIONAL'):
+
+    date = re.search(r"\[[ a-zA-Z0-9]+\]", longline)
+    date = date[0].strip("[]")
+    dmy = date.split(" ")
+    year = int(dmy[len(dmy)-2])
+    if (year < first_year):
+        print("RFC year too early")
+        break
+    fields = re.finditer(r"[a-zA-Z0-9]+\: [a-zA-Z0-9]+", longline)
+    doc = {}
+    for fielditer in fields:
+        field = fielditer.group()
+        [key, value] = field.split(': ')
+        doc[key] = value;
+
+    # Do not apply stream, area, wg filters for ADs
+    if (year < first_ad_year):
+        if (doc["Stream"] != 'IETF') and not (doc["Stream"] in streams):
+            print(doc["Stream"] + " stream not tracked")
             continue
-        if (not include_experimental) and (status == 'EXPERIMENTAL'):
+        if (doc["WG"] == 'NON') and not ('NON' in wgs):
+            print("No working group")
             continue
+        if not ((doc["Area"] in areas) or (doc["WG"] in wgs)):
+            print(doc["Area"] + " and " + doc["WG"] + " don't match")
+            continue
+    if (not include_informational) and (doc['Status'] == 'INFORMATIONAL'):
+        print("Discarding INFORMATIONAL")
+        continue
+    if (not include_experimental) and (doc['Status'] == 'EXPERIMENTAL'):
+        print("Discarding EXPERIMENTAL")
+        continue
     if longline.find(name) >= 0:
+        print("Authored")
         authored.append(rfcnum.encode('ascii'))
         continue
+
     # Extract the ballot
     ballot_review = False
     ballot_url='https://datatracker.ietf.org/doc/rfc'+rfcnum+'/ballot/'
@@ -63,7 +106,6 @@ for row in table.contents:
         continue
     else:
         ballot_html = ballot_resp.read()
-    print("\n" + rfcnum, end=" ")
     ballot_soup = BeautifulSoup(ballot_html, 'html.parser')
     for ad in ballot_soup.select('div[class="balloter-name"]'):
         if ad.a == None: # did not review
@@ -83,8 +125,10 @@ for row in table.contents:
     uc_name = full_name.encode('utf-8')
     if (dt_html.find(uc_name) < 0):
         if ballot_review:
-            print("Balloted", end="")
+            print("Balloted")
             balloted.append(rfcnum.encode('ascii'))
+        else:
+            print("Name did not appear")
         continue
     found = False
     dtsoup = BeautifulSoup(dt_html, 'html.parser')
@@ -125,14 +169,14 @@ for row in table.contents:
             value = values[1].text.strip()
             #print("AD: " + value)
             if value == full_name:
-                print("Responsible AD",end="")
+                print("Responsible AD")
                 responsible_ad.append(rfcnum.encode('ascii'))
                 found = true
                 break
     if found:
         continue
 
-    print("Acknowledged", end="")
+    print("Acknowledged")
     contributor.append(rfcnum.encode('ascii'))
 
 
