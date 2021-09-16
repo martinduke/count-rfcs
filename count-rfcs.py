@@ -2,6 +2,7 @@ import http.client
 import re
 import json
 import sys
+import pprint
 from bs4 import BeautifulSoup
 
 # Here are the parameters to set. See the README for more information
@@ -10,7 +11,7 @@ include_informational = False
 include_experimental = True
 include_acknowledgments = True
 first_year = 2013
-first_rfc = 4614
+first_rfc = 9000
 last_rfc = 20000
 first_ad_year = 2020
 # The filters below only apply to RFCs published before 'first_ad_year'
@@ -29,6 +30,7 @@ responsible_ad = {}
 shepherd = {}
 contributor = {}
 balloted = {}
+retrieve_error = {}
 # not yet supported
 art_reviewer = {}
 
@@ -40,6 +42,8 @@ except ConnectionError as e:
     sys.exit()
 else:
     rfc_list = rfced_resp.read()
+if rfced_resp.closed:
+    rfced = http.client.HTTPSConnection('www.rfc-editor.org')
 
 # Set up datatracker connection
 dt = http.client.HTTPSConnection('datatracker.ietf.org')
@@ -106,13 +110,17 @@ for row in table.contents:
         continue
 
     # Get the datatracker metadata
-    dt.request('GET', '/doc/rfc'+rfcnum+'/doc.json')
-    try: dt_resp = dt.getresponse()
-    except ConnectionError as e:
-        print("Could not retrieve .json: " + type(e).__qualname__)
-        continue
-    else:
-        dt_json = dt_resp.read()
+    retry = True
+    while retry:
+        dt.request('GET', '/doc/rfc'+rfcnum+'/doc.json')
+        try: dt_resp = dt.getresponse()
+        except ConnectionError as e:
+             continue
+#            retrieve_error[rfcnum] = title
+#            print("Could not retrieve .json: " + type(e).__qualname__)
+        else:
+            retry = False
+            dt_json = dt_resp.read()
     # Check for author, shepherd, AD
     found = False
     dt_data = json.loads(dt_json)
@@ -138,13 +146,19 @@ for row in table.contents:
 
     # Check the text of the RFC for acknowledgments
     if include_acknowledgments:
-        rfced.request('GET', '/rfc/rfc'+rfcnum+'.txt')
-        try: rfced_resp = rfced.getresponse()
-        except ConnectionError as e:
-            print("Could not retrieve .txt: " + type(e).__qualname__)
-            continue;
-        else:
-            rfc_txt = rfced_resp.read().decode('utf-8')
+        retry = True
+        while retry:
+            rfced.request('GET', '/rfc/rfc'+rfcnum+'.txt')
+            try: rfced_resp = rfced.getresponse()
+            except ConnectionError as e:
+                continue
+#                retrieve_error[rfcnum] = title
+#                print("Could not retrieve .txt: " + type(e).__qualname__)
+            else:
+                retry = False
+                rfc_txt = rfced_resp.read().decode('utf-8')
+        if rfced_resp.closed:
+            rfced = http.client.HTTPSConnection('www.rfc-editor.org')
         if rfc_txt.find(name) >= 0:
             print("Contributor")
             contributor[rfcnum] = title
@@ -158,6 +172,7 @@ for row in table.contents:
     dt.request('GET', '/doc/rfc'+rfcnum+'/ballot/')
     try: dt_resp = dt.getresponse()
     except ConnectionError as e:
+        retrieve_error[rfcnum] = title
         print("Could not retrieve ballot: " + type(e).__qualname__)
         continue
     else:
@@ -179,12 +194,14 @@ for row in table.contents:
 rfced.close()
 dt.close()
 print("Authored: " + str(len(author)))
-print(author)
+pprint.pprint(author)
 print("Shepherded:" + str(len(shepherd)))
-print(shepherd)
+pprint.pprint(shepherd)
 print("Responsible AD: " + str(len(responsible_ad)))
-print(responsible_ad)
+pprint.pprint(responsible_ad)
 print("Balloted: " + str(len(balloted)))
-print(balloted)
+pprint.pprint(balloted)
 print("Acknowledged: " + str(len(contributor)))
-print(contributor)
+pprint.pprint(contributor)
+print("Document retrieval errors: " + str(len(retrieve_error)))
+pprint.pprint(retrieve_error)
