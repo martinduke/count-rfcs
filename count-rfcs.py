@@ -11,7 +11,7 @@ include_informational = False
 include_experimental = True
 include_acknowledgments = True
 first_year = 2013
-first_rfc = 9000
+first_rfc = 4614
 last_rfc = 20000
 first_ad_year = 2020
 # The filters below only apply to RFCs published before 'first_ad_year'
