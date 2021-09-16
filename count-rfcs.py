@@ -1,6 +1,7 @@
-import urllib.request
+import http.client
 import re
 import json
+import sys
 from bs4 import BeautifulSoup
 
 # Here are the parameters to set. See the README for more information
@@ -31,14 +32,17 @@ balloted = {}
 # not yet supported
 art_reviewer = {}
 
-rfced_url = 'https://www.rfc-editor.org/rfc-index2.html'
-rfced_req = urllib.request.Request(rfced_url)
-try: rfced_resp = urllib.request.urlopen(rfced_req)
-except urllib.error.HTTPError as e:
-    print(e.reason)
+rfced = http.client.HTTPSConnection('www.rfc-editor.org')
+rfced.request('GET', '/rfc-index2.html')
+try: rfced_resp = rfced.getresponse()
+except ConnectionError as e:
+    print(type(e).__qualname__)
     sys.exit()
 else:
     rfc_list = rfced_resp.read()
+
+# Set up datatracker connection
+dt = http.client.HTTPSConnection('datatracker.ietf.org')
 
 rfc_soup = BeautifulSoup(rfc_list, 'html.parser')
 # Find third table in document
@@ -88,7 +92,7 @@ for row in table.contents:
         if (doc["WG"] == 'NON') and not ('NON' in wgs):
             print("Discarding No working group")
             continue
-        if (doc["WG"= == 'IESG') and not ('IESG' in wgs):
+        if (doc["WG"] == 'IESG') and not ('IESG' in wgs):
             print("Discarding IESG working group")
             continue
         if not ((doc["Area"] in areas) or (doc["WG"] in wgs)):
@@ -102,10 +106,10 @@ for row in table.contents:
         continue
 
     # Get the datatracker metadata
-    dt_url='https://datatracker.ietf.org/doc/rfc'+rfcnum+'/doc.json'
-    dt_req = urllib.request.Request(dt_url)
-    try: dt_resp = urllib.request.urlopen(dt_req)
-    except urllib.error.HTTPError as e:
+    dt.request('GET', '/doc/rfc'+rfcnum+'/doc.json')
+    try: dt_resp = dt.getresponse()
+    except ConnectionError as e:
+        print("Could not retrieve .json: " + type(e).__qualname__)
         continue
     else:
         dt_json = dt_resp.read()
@@ -134,13 +138,13 @@ for row in table.contents:
 
     # Check the text of the RFC for acknowledgments
     if include_acknowledgments:
-        rfc_url='https://www.rfc-editor.org/rfc/rfc'+rfcnum+'.txt'
-        rfc_req = urllib.request.Request(rfc_url)
-        try: rfc_resp = urllib.request.urlopen(rfc_req)
-        except urllib.error.HTTPError as e:
-            continue
+        rfced.request('GET', '/rfc/rfc'+rfcnum+'.txt')
+        try: rfced_resp = rfced.getresponse()
+        except ConnectionError as e:
+            print("Could not retrieve .txt: " + type(e).__qualname__)
+            continue;
         else:
-            rfc_txt = rfc_resp.read().decode('utf-8')
+            rfc_txt = rfced_resp.read().decode('utf-8')
         if rfc_txt.find(name) >= 0:
             print("Contributor")
             contributor[rfcnum] = title
@@ -151,13 +155,13 @@ for row in table.contents:
         continue
 
     # Check if balloted
-    ballot_url='https://datatracker.ietf.org/doc/rfc'+rfcnum+'/ballot/'
-    ballot_req = urllib.request.Request(ballot_url)
-    try: ballot_resp = urllib.request.urlopen(ballot_req)
-    except urllib.error.HTTPError as e:
+    dt.request('GET', '/doc/rfc'+rfcnum+'/ballot/')
+    try: dt_resp = dt.getresponse()
+    except ConnectionError as e:
+        print("Could not retrieve ballot: " + type(e).__qualname__)
         continue
     else:
-        ballot_html = ballot_resp.read()
+        ballot_html = dt_resp.read()
     ballot_soup = BeautifulSoup(ballot_html, 'html.parser')
     for ad in ballot_soup.select('div[class="balloter-name"]'):
         if ad.a == None: # did not review
@@ -172,6 +176,8 @@ for row in table.contents:
     if not found:
         print("Name did not appear")
 
+rfced.close()
+dt.close()
 print("Authored: " + str(len(author)))
 print(author)
 print("Shepherded:" + str(len(shepherd)))
